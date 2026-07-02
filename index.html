@@ -5,8 +5,22 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>The Slip</title>
 
-<!-- PWA manifest -->
-<link rel="manifest" href="manifest.json">
+<!-- PWA manifest — inline so no separate file needed -->
+<script>
+const manifestData = {
+  name: "The Slip", short_name: "The Slip",
+  description: "Sports betting tracker — live odds, parlays, locks",
+  start_url: "/", display: "standalone",
+  background_color: "#0a0e1a", theme_color: "#0a0e1a",
+  orientation: "portrait-primary",
+  icons: [{ src: "icon-192.png", sizes: "192x192", type: "image/png", purpose: "any maskable" }]
+};
+const manifestBlob = new Blob([JSON.stringify(manifestData)], {type:'application/json'});
+const manifestURL = URL.createObjectURL(manifestBlob);
+const manifestLink = document.createElement('link');
+manifestLink.rel = 'manifest'; manifestLink.href = manifestURL;
+document.head.appendChild(manifestLink);
+</script>
 
 <!-- iOS PWA support -->
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1538,8 +1552,7 @@ function confirmPick(parlayId) {
   }
 
   saveSt();
-  const g = getGame(gid);
-  const sideLbl = side === 'draw' ? 'Draw' : side === 'away' ? (g?.away||'Away') : (g?.home||'Home');
+  const sideLbl = side === 'draw' ? 'Draw' : side === 'away' ? (getGame(gid)?.away||'Away') : (getGame(gid)?.home||'Home');
   const typeLbl = type === 'spread' ? 'spread' : 'ML';
   showToast(`✓ ${sideLbl} ${typeLbl} added to My Bets`);
   closeModal();
