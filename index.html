@@ -342,23 +342,38 @@ input[type=number],input[type=text]{padding:5px 8px;font-size:13px;border-radius
   <!-- SETTINGS TAB -->
   <div id="tab-settings" class="hidden">
     <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border);">
-        <div><div style="font-weight:600;font-size:14px;">Default unit ($)</div><div class="lbl">Per standard bet</div></div>
+      <!-- Unit value setting — most important, shown first -->
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--border);">
+        <div>
+          <div style="font-weight:700;font-size:14px;color:var(--text);">1 Unit = $ <span id="unit-dollar-preview" style="color:var(--accent);"></span></div>
+          <div class="lbl">Sets the dollar value of each unit</div>
+        </div>
+        <input type="number" class="unit-in" id="set-dollar-per-unit" min="1" step="1" placeholder="e.g. 10" style="width:80px;">
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--border);">
+        <div><div style="font-weight:700;font-size:14px;color:var(--text);">Default units per bet</div><div class="lbl">How many units per standard bet</div></div>
         <input type="number" class="unit-in" id="set-unit" min="1">
       </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border);">
-        <div><div style="font-weight:600;font-size:14px;">Season</div><div class="lbl">Groups your picks</div></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--border);">
+        <div><div style="font-weight:700;font-size:14px;color:var(--text);">Season</div><div class="lbl">Groups your picks</div></div>
         <input type="text" class="unit-in" id="set-season" style="width:90px;">
       </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--border);">
-        <div><div style="font-weight:600;font-size:14px;">Default juice</div><div class="lbl">Spread odds default</div></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--border);">
+        <div><div style="font-weight:700;font-size:14px;color:var(--text);">Default juice</div><div class="lbl">Spread odds default</div></div>
         <input type="number" class="unit-in" id="set-juice">
+      </div>
+      <div style="padding:14px 0;border-bottom:1px solid var(--border);">
+        <div style="font-weight:700;font-size:14px;color:var(--text);margin-bottom:4px;">Example bet</div>
+        <div id="unit-example" class="lbl" style="font-size:13px;"></div>
       </div>
       <div style="padding:12px 0;">
         <button class="btn btn-danger" id="clear-btn">Clear all picks</button>
       </div>
     </div>
   </div>
+
+  <!-- TOAST NOTIFICATION -->
+  <div id="toast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--success);color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:600;z-index:3000;box-shadow:0 4px 16px rgba(0,0,0,0.3);white-space:nowrap;"></div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
@@ -611,7 +626,15 @@ function updateHeaderStats() {
   const locks = document.getElementById('hs-locks');
   const bets = document.getElementById('hs-bets');
   if(rec) rec.textContent = completed.length ? `${w}-${l}` : '—';
-  if(pnl) { pnl.textContent = completed.length ? pnlStr : '—'; pnl.className = 'hstat-val ' + pnlCls; }
+  if(pnl) { 
+    const dol = toDollars(tot);
+    pnl.textContent = completed.length ? (tot>=0?'+':'')+tot.toFixed(1)+'u' : '—'; 
+    pnl.className = 'hstat-val ' + pnlCls; 
+    const pnlParent = pnl.parentElement;
+    let dolEl = pnlParent.querySelector('.hstat-dol');
+    if (!dolEl) { dolEl = document.createElement('div'); dolEl.className = 'hstat-dol lbl'; pnlParent.appendChild(dolEl); }
+    dolEl.textContent = completed.length ? (dol>=0?'+$':'-$')+Math.abs(dol).toFixed(0) : '';
+  }
   if(locks) locks.textContent = lockW+lockL > 0 ? `${lockW}-${lockL}` : '—';
   if(bets) bets.textContent = active || '—';
 }
@@ -628,7 +651,7 @@ const SK = 'bt_v4';
 let st = {
   picks: {},       // key: season_gameId_type_idx → {side,type,gameId,units,lock,parlayId,gameSnap,date,completed,idx}
   parlays: {},     // key: parlayId → {num,stake,lock,season,date}
-  settings: { unit:5, season:'WC2026', juice:-110 },
+  settings: { unit:1, season:'WC2026', juice:-110, dollarPerUnit:10 },
   games: []
 };
 
@@ -686,6 +709,35 @@ const sStr = v => (v>0?'+':'')+v;
 const toDec = o => o>0 ? o/100+1 : 100/Math.abs(o)+1;
 const toAm = d => d>=2 ? Math.round((d-1)*100) : Math.round(-100/(d-1));
 const payout = (o,u) => o>0 ? u*o/100 : u*100/Math.abs(o);
+
+// Convert units to dollars using the user's setting
+const toDollars = units => units * (st.settings.dollarPerUnit || 10);
+const fmtPnl = (units) => {
+  const d = toDollars(units);
+  const uStr = (units >= 0 ? '+' : '') + units.toFixed(2) + 'u';
+  const dStr = (d >= 0 ? '+$' : '-$') + Math.abs(d).toFixed(2);
+  return `${uStr} (${dStr})`;
+};
+
+let toastTimer = null;
+function showToast(msg, color) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.background = color || 'var(--success)';
+  el.style.display = 'block';
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.style.display = 'none'; }, 2500);
+}
+
+function updateSettingsPreview() {
+  const dpu = st.settings.dollarPerUnit || 10;
+  const units = st.settings.unit || 1;
+  const preview = document.getElementById('unit-dollar-preview');
+  const example = document.getElementById('unit-example');
+  if (preview) preview.textContent = dpu;
+  if (example) example.textContent = `${units} unit bet at −110 risks $${(units * dpu).toFixed(2)} and pays +$${(units * dpu * 100/110).toFixed(2)} if it wins`;
+}
 const legOdds = (gid,type,side) => { if(type==='spread') return st.settings.juice; const g=st.games.find(x=>x.id===gid); return g ? g.ml[side] : -110; };
 const sideName = (g,side) => side==='draw'?'Draw':side==='away'?g.away:g.home;
 
@@ -979,7 +1031,7 @@ function renderGames() {
           const d = u * (p.units || st.settings.unit);
           const typeBadge = p.type === 'spread' ? 'b-spread' : 'b-ml';
           const typeLabel = p.type === 'spread' ? 'SPREAD' : 'ML';
-          bits.push(`<span class="badge ${u>0?'b-win':u<0?'b-loss':'b-push'}">${u>0?'W':u<0?'L':'P'}</span><span class="res-amt ${u>0?'pos':u<0?'neg':''}">${u>=0?'+':''}${u.toFixed(2)}u / ${d>=0?'+$':'-$'}${Math.abs(d).toFixed(2)} <span class="badge ${typeBadge}" style="font-size:10px;">${typeLabel}</span></span>`);
+          bits.push(`<span class="badge ${u>0?'b-win':u<0?'b-loss':'b-push'}">${u>0?'W':u<0?'L':'P'}</span><span class="res-amt ${u>0?'pos':u<0?'neg':''}">${fmtPnl(u)} <span class="badge ${typeBadge}" style="font-size:10px;">${typeLabel}</span></span>`);
         });
         if (bits.length) resultHtml = `<div class="result-line">${bits.join('<span style="color:var(--border-strong);margin:0 6px;">·</span>')}</div>`;
       }
@@ -1244,7 +1296,11 @@ function agg(list){
   return {w,l,ps,tot,n:list.length,pct:w+l>0?(w/(w+l)*100):null};
 }
 
-function fmtV(v){ return unitMode==='units'?(v>=0?'+':'')+v.toFixed(2)+'u':(v>=0?'+$':'-$')+Math.abs(v).toFixed(2); }
+function fmtV(v){ 
+  const u = (v>=0?'+':'')+v.toFixed(2)+'u';
+  const d = (toDollars(v)>=0?'+$':'-$')+Math.abs(toDollars(v)).toFixed(2);
+  return unitMode==='units' ? u : unitMode==='dollars' ? d : `${u} (${d})`;
+}
 function valOf(o){ return unitMode==='units'?o.units:o.dollars; }
 
 function renderDash(){
@@ -1313,19 +1369,18 @@ function renderLedger(){
   const pct=w+l>0?(w/(w+l)*100).toFixed(1):'—';
   document.getElementById('led-stats').innerHTML=`
     <div class="stat-card"><div class="stat-lbl">Record</div><div class="stat-val">${w}-${l}${ps?'-'+ps:''}</div><div class="stat-sub">${pct}% win rate</div></div>
-    <div class="stat-card"><div class="stat-lbl">Net P&L</div><div class="stat-val" style="color:${tot>=0?'var(--success)':'var(--danger)'};">${tot>=0?'+':''}${tot.toFixed(2)}u</div><div class="stat-sub">units</div></div>
-    <div class="stat-card"><div class="stat-lbl">Net P&L</div><div class="stat-val" style="color:${tot>=0?'var(--success)':'var(--danger)'};">${tot>=0?'+$':'-$'}${Math.abs(tot).toFixed(2)}</div><div class="stat-sub">dollars</div></div>
-    <div class="stat-card"><div class="stat-lbl">Picks</div><div class="stat-val">${all.length}</div><div class="stat-sub">settled</div></div>`;
+    <div class="stat-card"><div class="stat-lbl">Net units</div><div class="stat-val" style="color:${tot>=0?'var(--success)':'var(--danger)'};">${tot>=0?'+':''}${tot.toFixed(2)}u</div><div class="stat-sub">${tot>=0?'+$':'-$'}${Math.abs(toDollars(tot)).toFixed(2)}</div></div>
+    <div class="stat-card"><div class="stat-lbl">Picks</div><div class="stat-val">${all.length}</div><div class="stat-sub">settled this season</div></div>`;
   const le=document.getElementById('led-body');
   if(!all.length){ le.innerHTML='<div style="text-align:center;padding:2rem;color:var(--text-3);">No completed picks this season.</div>'; return; }
   le.innerHTML=all.sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map(o=>{
-    const u=o.units, d=o.dollars;
+    const u=o.units;
     const cls=u>0?'pos':u<0?'neg':''; const badge=u>0?'b-win':u<0?'b-loss':'b-push';
-    const uStr=(u>=0?'+':'')+u.toFixed(2)+'u'; const dStr=(d>=0?'+$':'-$')+Math.abs(d).toFixed(2);
+    const pnlStr = fmtPnl(u);
     return `<div class="led-row">
       <div><div style="font-weight:600;">${o.gameName} ${o.lock?'<span class="badge b-lock">Lock</span>':''} ${o.type==='parlay'?'<span class="badge b-parlay">Parlay</span>':''}</div>
       <div class="lbl">${o.pick} · ${o.date||''}</div></div>
-      <div style="display:flex;align-items:center;gap:8px;"><span class="badge ${badge}">${u>0?'W':u<0?'L':'P'}</span><span class="${cls}" style="font-weight:600;">${uStr} / ${dStr}</span></div>
+      <div style="display:flex;align-items:center;gap:8px;"><span class="badge ${badge}">${u>0?'W':u<0?'L':'P'}</span><span class="${cls}" style="font-weight:600;">${pnlStr}</span></div>
     </div>`;
   }).join('');
 }
@@ -1401,9 +1456,11 @@ function updateModalPayout() {
     ? (side === 'away' ? g.spreadAwayOdds : g.spreadHomeOdds) || st.settings.juice
     : g.ml[side];
   if (odds == null) { document.getElementById('modal-payout').textContent = ''; return; }
-  const win = odds > 0 ? units * odds / 100 : units * 100 / Math.abs(odds);
+  const winUnits = payout(odds, units);
+  const riskDollars = toDollars(units);
+  const winDollars = toDollars(winUnits);
   document.getElementById('modal-payout').innerHTML =
-    `Risk <strong>${units} unit${units !== 1 ? 's' : ''}</strong> ($${(units * st.settings.unit).toFixed(2)}) · To win <strong>${win.toFixed(2)}u</strong> ($${(win * st.settings.unit).toFixed(2)})`;
+    `Risk <strong>${units}u ($${riskDollars.toFixed(2)})</strong> · To win <strong>${winUnits.toFixed(2)}u ($${winDollars.toFixed(2)})</strong>`;
 }
 
 function updateModalLockBtn() {
@@ -1461,9 +1518,12 @@ function confirmPick(parlayId) {
   }
 
   saveSt();
+  const g = getGame(gid);
+  const sideLbl = side === 'draw' ? 'Draw' : side === 'away' ? (g?.away||'Away') : (g?.home||'Home');
+  const typeLbl = type === 'spread' ? 'spread' : 'ML';
+  showToast(`✓ ${sideLbl} ${typeLbl} added to My Bets`);
   closeModal();
   render();
-  showTab('mybets');
 }
 document.addEventListener('click',e=>{
   const t=e.target; let el;
@@ -1486,7 +1546,8 @@ document.addEventListener('change',e=>{
   if(t.id==='modal-units') updateModalPayout();
   else if(t.dataset.units){ const k=t.dataset.units; if(st.picks[k]){st.picks[k].units=Math.max(1,Number(t.value));saveSt();renderSlip();} }
   else if(t.dataset.parlayStake){ const id=t.dataset.parlayStake; if(st.parlays[id]){st.parlays[id].stake=Math.max(1,Number(t.value));saveSt();renderSlip();} }
-  else if(t.id==='set-unit'){st.settings.unit=Number(t.value);saveSt();}
+  else if(t.id==='set-dollar-per-unit'){st.settings.dollarPerUnit=Math.max(1,Number(t.value));saveSt();updateSettingsPreview();}
+  else if(t.id==='set-unit'){st.settings.unit=Number(t.value);saveSt();updateSettingsPreview();}
   else if(t.id==='set-season'){st.settings.season=t.value;saveSt();}
   else if(t.id==='set-juice'){st.settings.juice=Number(t.value);saveSt();}
 });
@@ -1505,9 +1566,12 @@ function showTab(t){
 }
 
 function applySettings(){
-  document.getElementById('set-unit').value=st.settings.unit;
-  document.getElementById('set-season').value=st.settings.season;
-  document.getElementById('set-juice').value=st.settings.juice;
+  document.getElementById('set-unit').value = st.settings.unit;
+  document.getElementById('set-season').value = st.settings.season;
+  document.getElementById('set-juice').value = st.settings.juice;
+  const dpuEl = document.getElementById('set-dollar-per-unit');
+  if (dpuEl) dpuEl.value = st.settings.dollarPerUnit || 10;
+  updateSettingsPreview();
 }
 
 function render(){
