@@ -779,17 +779,17 @@ function pickPnlUnits(pick) {
     if(spread == null) return null;
     const margin = side==='home' ? (hs+spread)-as : (as-spread)-hs;
     if(margin===0) return 0;
-    const o = pick.spreadOdds || st.settings.juice;
-    return margin>0 ? payout(o,units) : -units;
+    const spreadO = pick.spreadOdds || st.settings.juice;
+    return margin>0 ? payout(spreadO,units) : -units;
   } else {
     const draw = hs===as;
     let won;
     if(side==='draw') won=draw;
     else if(side==='home') won=hs>as;
     else won=as>hs;
-    const o = pick.mlOdds || legOdds(gid,'ml',side);
+    const mlO = pick.mlOdds || legOdds(gid,'ml',side);
     if(draw && side!=='draw') return null;
-    return won ? payout(o,units) : -units;
+    return won ? payout(mlO,units) : -units;
   }
 }
 
