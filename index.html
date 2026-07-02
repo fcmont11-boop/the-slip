@@ -837,13 +837,24 @@ async function loadGames() {
     const sport = 'soccer_fifa_world_cup';
     const dates = [dateStr(0), dateStr(1), dateStr(2), dateStr(3)];
 
-    // Fetch odds once + scores for each of the 4 date windows — all in parallel
-    const [oddsRes, ...scoreRess] = await Promise.all([
-      fetch(`${PROXY}/api/odds?sport=${sport}`),
-      ...dates.map(ds => fetch(`${PROXY}/api/scores?sport=${sport}&date=${ds}`))
-    ]);
+    // Test proxy first
+    let oddsData = { events:[] };
+    let scoresResults = dates.map(() => ({ events:[] }));
 
-    const oddsData = oddsRes.ok ? await oddsRes.json() : { events:[] };
+    try {
+      const oddsRes = await fetch(`${PROXY}/api/odds?sport=${sport}`);
+      if (oddsRes.ok) oddsData = await oddsRes.json();
+      else console.warn('Odds API failed:', oddsRes.status);
+    } catch(e) { console.warn('Odds fetch error:', e.message); }
+
+    // Fetch scores for each date
+    for (let i = 0; i < dates.length; i++) {
+      try {
+        const res = await fetch(`${PROXY}/api/scores?sport=${sport}&date=${dates[i]}`);
+        if (res.ok) scoresResults[i] = await res.json();
+        else console.warn(`Scores failed for ${dates[i]}:`, res.status);
+      } catch(e) { console.warn(`Scores error for ${dates[i]}:`, e.message); }
+    }
 
     // Build odds lookup keyed by sorted team names — normalize names for matching
     const normalize = s => s.toLowerCase().replace(/[^a-z]/g,'');
@@ -866,7 +877,7 @@ async function loadGames() {
     // Merge each day's scores with odds
     st.games = [];
     for (let i = 0; i < dates.length; i++) {
-      const scoresData = scoreRess[i].ok ? await scoreRess[i].json() : { events:[] };
+      const scoresData = scoresResults[i];
       (scoresData.events || []).forEach(e => {
         const normAway = normalize(e.away.team||'');
         const normHome = normalize(e.home.team||'');
@@ -964,9 +975,18 @@ async function loadGames() {
 
     // Update note bar with credit info (already done above)
     renderGames();
-    if (!st.games.length) c.innerHTML = '<div style="text-align:center;padding:2rem;color:var(--text-3);">No upcoming World Cup matches found.</div>';
+    if (!st.games.length) {
+      c.innerHTML = `<div style="text-align:center;padding:2rem;color:var(--text-3);">
+        No matches found for the next 3 days.<br>
+        <small style="font-size:11px;opacity:0.7;">Proxy: ${PROXY}</small><br>
+        <button class="btn btn-acc" style="margin-top:12px;padding:6px 16px;" onclick="loadGames()">↻ Try again</button>
+      </div>`;
+    }
   } catch(err) {
-    c.innerHTML = `<div style="text-align:center;padding:2rem;color:var(--text-3);">Could not load games.<br><small>${err.message}</small></div>`;
+    c.innerHTML = `<div style="text-align:center;padding:2rem;color:var(--text-3);">
+      Could not load games.<br><small>${err.message}</small><br>
+      <button class="btn btn-acc" style="margin-top:12px;padding:6px 16px;" onclick="loadGames()">↻ Retry</button>
+    </div>`;
   }
 }
 
