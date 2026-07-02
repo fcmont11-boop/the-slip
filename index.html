@@ -849,26 +849,26 @@ async function loadGames() {
   c.innerHTML = '<div style="text-align:center;padding:2rem;color:var(--text-3);">Fetching games…</div>';
   try {
     const sport = 'soccer_fifa_world_cup';
+    const espnPath = 'soccer/fifa.world';
     const dates = [dateStr(0), dateStr(1), dateStr(2), dateStr(3)];
 
-    // Test proxy first
-    let oddsData = { events:[] };
-    let scoresResults = dates.map(() => ({ events:[] }));
-
+    // Fetch odds from proxy (needs API key) and scores directly from ESPN (public, no key)
+    // ESPN direct call avoids any CORS/proxy issues for scores
+    let oddsData = { events: [] };
     try {
       const oddsRes = await fetch(`${PROXY}/api/odds?sport=${sport}`);
       if (oddsRes.ok) oddsData = await oddsRes.json();
-      else console.warn('Odds API failed:', oddsRes.status);
-    } catch(e) { console.warn('Odds fetch error:', e.message); }
+    } catch(e) { console.warn('Odds fetch failed:', e.message); }
 
-    // Fetch scores for each date
-    for (let i = 0; i < dates.length; i++) {
-      try {
-        const res = await fetch(`${PROXY}/api/scores?sport=${sport}&date=${dates[i]}`);
-        if (res.ok) scoresResults[i] = await res.json();
-        else console.warn(`Scores failed for ${dates[i]}:`, res.status);
-      } catch(e) { console.warn(`Scores error for ${dates[i]}:`, e.message); }
-    }
+    // Fetch scores directly from ESPN for each date
+    const scoresFetches = await Promise.allSettled(
+      dates.map(ds =>
+        fetch(`https://site.api.espn.com/apis/site/v2/sports/${espnPath}/scoreboard?dates=${ds}&limit=20`)
+          .then(r => r.ok ? r.json() : { events: [] })
+          .catch(() => ({ events: [] }))
+      )
+    );
+    const scoresResults = scoresFetches.map(r => r.status === 'fulfilled' ? r.value : { events: [] });
 
     // Build odds lookup keyed by sorted team names — normalize names for matching
     const normalize = s => s.toLowerCase().replace(/[^a-z]/g,'');
@@ -891,10 +891,29 @@ async function loadGames() {
     // Merge each day's scores with odds
     st.games = [];
     for (let i = 0; i < dates.length; i++) {
-      const scoresData = scoresResults[i];
-      (scoresData.events || []).forEach(e => {
-        const normAway = normalize(e.away.team||'');
-        const normHome = normalize(e.home.team||'');
+      const raw = scoresResults[i];
+      // Handle both ESPN direct format (events[]) and proxy format (events[])
+      const events = raw.events || [];
+      events.forEach(e => {
+        const comp = e.competitions ? e.competitions[0] : null;
+        if (!comp) return;
+        const homeComp = comp.competitors?.find(c => c.homeAway === 'home');
+        const awayComp = comp.competitors?.find(c => c.homeAway === 'away');
+        const statusType = comp.status?.type || e.status?.type || {};
+        // Normalize to common format
+        const evt = {
+          id: e.id,
+          away: { team: awayComp?.team?.shortDisplayName || e.away?.team, score: awayComp?.score || e.away?.score },
+          home: { team: homeComp?.team?.shortDisplayName || e.home?.team, score: homeComp?.score || e.home?.score },
+          status: {
+            completed: statusType.completed ?? e.status?.completed ?? false,
+            inProgress: (statusType.state === 'in') || e.status?.inProgress || false,
+            detail: statusType.shortDetail || statusType.name || e.status?.detail || ''
+          },
+          startTime: e.date || e.startTime
+        };
+        const normAway = normalize(evt.away.team||'');
+        const normHome = normalize(evt.home.team||'');
         const key = [normAway, normHome].sort().join('||');
         let odds = oddsMap[key] || null;
         // Try fallback if no odds matched (handles ESPN short name vs API full name mismatches)
@@ -903,12 +922,12 @@ async function loadGames() {
           if (fb) odds = { spread: fb.spread, ml: fb.ml, bookCount: 0 };
         }
         st.games.push({
-          id: e.id,
+          id: evt.id,
           dateKey: dates[i],
-          home: e.home.team,
-          away: e.away.team,
-          homeScore: e.home.score ?? null,
-          awayScore: e.away.score ?? null,
+          home: evt.home.team,
+          away: evt.away.team,
+          homeScore: evt.home.score ?? null,
+          awayScore: evt.away.score ?? null,
           spread: odds?.spread?.homePoint ?? null,
           spreadHomeOdds: odds?.spread?.homeOdds ?? null,
           spreadAwayOdds: odds?.spread?.awayOdds ?? null,
@@ -918,10 +937,10 @@ async function loadGames() {
             draw: odds?.ml?.draw ?? null,
           },
           bookCount: odds?.bookCount ?? 0,
-          time: e.startTime,
-          statusName: e.status.detail,
-          completed: e.status.completed,
-          inProgress: e.status.inProgress,
+          time: evt.startTime,
+          statusName: evt.status.detail,
+          completed: evt.status.completed,
+          inProgress: evt.status.inProgress,
         });
       });
     }
